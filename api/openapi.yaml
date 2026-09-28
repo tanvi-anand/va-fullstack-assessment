@@ -3,16 +3,224 @@ info:
   title: Vehicle Analytics API Assessment
   version: 1.0.0
   description: >
-    Only the health endpoint is predefined. You must design and implement the
-    metadata and data API, then document your full API in this spec (or a separate
-    file) and describe how to view it in justification.md.
-paths:
-  /health:
-    get:
-      summary: Health check (implemented in skeleton)
-      responses:
-        '200':
-          description: OK
+    This is the API for the Redback telemetry dashboard. I split it into two
+    parts: the sensor info (names, units and ranges) and the live readings.
+    The frontend calls GET /sensors once when it starts up, then it polls
+    GET /telemetry/latest every second and matches each reading to its sensor
+    using the sensorId. If GET /sensors gives back a 503, it means the API
+    is still loading the sensor info from the emulator, so wait a few seconds
+    and try again.
 servers:
   - url: http://localhost:4000
     description: Local development server
+
+tags:
+  - name: Health
+    description: Checks if the API is running and if it can reach the emulator.
+  - name: Metadata
+    description: The sensor names, units and ranges. These don't change while the API is running.
+  - name: Telemetry
+    description: The live sensor readings.
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Check if the API and the emulator connection are working
+      description: >
+        This sends back a status report instead of the { error } shape that
+        the other routes use, even when something is wrong. I did it this way
+        so a monitoring tool can always read the same fields, whether the API
+        is healthy or not.
+      responses:
+        '200':
+          description: The API is running and it can reach the emulator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: ok
+                emulator: true
+        '503':
+          description: The API is running, but it can't reach the emulator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: unhealthy
+                emulator: false
+  /sensors:
+    get:
+      tags: [Metadata]
+      summary: Get every sensor with its name, unit and range
+      description: >
+        The API loads the sensor names and units from the emulator once when it
+        starts, and the ranges come from a table in the API (ranges.ts). So
+        calling this route never talks to the emulator directly. The frontend
+        only needs to call it once. The min and max values are inclusive, so if
+        a value is exactly equal to max, it still counts as in range. If a
+        sensor isn't in the ranges table, its min and max come back as null.
+      responses:
+        '200':
+          description: A list with one item for each sensor.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SensorDetails'
+              example:
+                - sensorId: 1000000070501
+                  sensorName: BATTERY_TEMPERATURE
+                  unit: C
+                  min: 20
+                  max: 80
+                - sensorId: 3000000060103
+                  sensorName: BRAKE_PRESSURE_FRONT
+                  unit: bar
+                  min: 0
+                  max: 120
+        '503':
+          description: >
+            The sensor info hasn't loaded from the emulator yet. This should
+            only happen in the first few seconds after the API starts, or if
+            the emulator couldn't be reached at startup. Just wait a bit and
+            try again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Metadata for the sensors has not loaded yet. Please try again in a moment.
+  /telemetry/latest:
+    get:
+      tags: [Telemetry]
+      summary: Get the latest reading for each sensor
+      description: >
+        This sends back the most recent reading for each sensor, along with
+        whether it's in range. The API only keeps readings that pass
+        validation. If a value comes in as a number stored as a string, it
+        gets turned into a real number, and anything else that's invalid gets
+        thrown away. The names and units aren't included here, so the frontend
+        gets those from GET /sensors and matches them up using the sensorId.
+        If the list comes back empty, that just means no readings have come in
+        yet, and it isn't an error. If the emulator disconnects, the API keeps
+        the last readings it got, so check the timestamp to see if a reading
+        is still fresh.
+      responses:
+        '200':
+          description: A list with at most one reading for each sensor.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TelemetryReading'
+              example:
+                - sensorId: 3000000060102
+                  value: -120.004
+                  timestamp: 1790519854.273
+                  status: ok
+                  alarm: true
+                - sensorId: 3000000060001
+                  value: 441.36
+                  timestamp: 1790519854.223
+                  status: out_of_range
+                  alarm: true
+                - sensorId: 2000000051202
+                  value: 286.9
+                  timestamp: 1790519854.016
+                  status: out_of_range
+                  alarm: false
+                - sensorId: 3000000060003
+                  value: 23.63
+                  timestamp: 1790519854.041
+                  status: ok
+                  alarm: false
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status, emulator]
+      properties:
+        status:
+          type: string
+          enum: [ok, unhealthy]
+        emulator:
+          type: boolean
+          description: Whether the API can reach the emulator right now.
+    SensorDetails:
+      type: object
+      required: [sensorId, sensorName, unit, min, max]
+      properties:
+        sensorId:
+          type: integer
+          format: int64
+          description: The sensor's unique ID from the emulator. It's 13 digits long, which is too big for a 32-bit integer.
+          example: 3000000060101
+        sensorName:
+          type: string
+          example: VEHICLE_SPEED
+        unit:
+          type: string
+          enum: ['C', 'kPa', 'A', 'V', '%', 'km/h', 'deg', 'bar']
+        min:
+          type: number
+          nullable: true
+          description: The lowest value that still counts as in range (inclusive). It's null if the sensor isn't in the ranges table.
+          example: 0
+        max:
+          type: number
+          nullable: true
+          description: The highest value that still counts as in range (inclusive). It's null if the sensor isn't in the ranges table.
+          example: 250
+    TelemetryReading:
+      type: object
+      required: [sensorId, value, timestamp, status, alarm]
+      properties:
+        sensorId:
+          type: integer
+          format: int64
+          description: This matches a sensorId from GET /sensors.
+          example: 3000000060101
+        value:
+          type: number
+          description: The raw reading, in whatever unit GET /sensors says for this sensor.
+          example: 164.48
+        timestamp:
+          type: number
+          description: >
+            When the sensor actually took the reading, using the emulator's
+            clock and not the time the API received it. It's in seconds and not
+            milliseconds, so it needs to be multiplied by 1000 before using it
+            with JavaScript's Date.
+          example: 1790437667.93
+        status:
+          type: string
+          enum: [ok, out_of_range, unknown]
+          description: >
+            Whether this one reading is in range or not. ok means the value is
+            between min and max (including both). out_of_range means it's below
+            min or above max. unknown means the API couldn't check, either
+            because the sensor info hasn't loaded yet or because the sensor
+            doesn't have a range set.
+        alarm:
+          type: boolean
+          description: >
+            This is true when the sensor has gone out of range more than 3
+            times within 5 seconds. It stays true until 5 seconds go by with no
+            out of range readings. The difference between status and alarm is
+            that status is about one specific reading, but alarm is about the last
+            few seconds. So seeing status ok with alarm true is totally normal.
+            It means the value is fine right now, but the sensor has been going
+            out of range a lot recently. It's always false when status is
+            unknown.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: A plain explanation of what went wrong.
+ 

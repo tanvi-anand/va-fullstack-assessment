@@ -68,6 +68,9 @@ code {
     --destructive-foreground: 0 0% 98%;
     --success: 100 70% 40%;
     --success-foreground: 100 70% 90%;
+    --warning: 39 87% 60.8%;
+    --warning-foreground: 0 0% 3.9%;
+    --stale: 221 12.9% 33.3%;
     --border: 0 0% 14.9%;
     --input: 0 0% 14.9%;
     --ring: 0 72.2% 50.6%;

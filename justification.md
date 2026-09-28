@@ -14,7 +14,7 @@ Use this file to briefly explain your design decisions. Bullet points are fine.
 
 ### 3. Emulator (read-only)
 
-- Confirm you did not modify the emulator service (`emulator/`) or its `sensor-config.json`. If you needed to work around anything, note it here: y/N
+- Confirm you did not modify the emulator service (`emulator/`) or its `sensor-config.json`. If you needed to work around anything, note it here: N
 
 ### 4. OpenAPI / Swagger
 

@@ -45,6 +45,11 @@ const config: Config = {
           DEFAULT: 'hsl(var(--success))',
           foreground: 'hsl(var(--success-foreground))'
         },
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--warning-foreground))'
+        },
+        stale: 'hsl(var(--stale))',
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

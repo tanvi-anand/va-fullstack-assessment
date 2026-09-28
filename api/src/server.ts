@@ -1,39 +1,71 @@
+// HTTP side: express setup, the routes, and starting everything up
+
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
+import type { sensorDetails, sensorReading } from './types';
+import { metadata, latestData, alarmOn, apiState } from './state';
+import { getStatus, SENSOR_RANGES } from './ranges';
+import { EMULATOR_URL, fetchMetadata, connectToEmulator } from './emulator';
 
 const app = express();
-app.use(cors({ origin: true, credentials: false }));
+app.use(cors({origin: true, credentials: false}));
 app.use(express.json());
-
-// Default to local emulator when EMULATOR_URL is not provided.
-const EMULATOR_URL = process.env.EMULATOR_URL || 'http://localhost:3001';
 
 app.get('/health', async (_req, res) => {
   try {
-    const r = await fetch(`${EMULATOR_URL.replace(/\/$/, '')}/sensors`);
+    const r = await fetch(`${EMULATOR_URL}/sensors`);
     if (r.ok) {
       return res.json({ status: 'ok', emulator: true });
     }
-  } catch {
-    // connection failed
-  }
+  } catch {}
   res.status(503).json({ status: 'unhealthy', emulator: false });
 });
 
-// ---------------------------------------------------------------------------
-// Assessment: implement the API below.
-// The emulator is a black box: it only outputs data. Its base URL is EMULATOR_URL
-// (e.g. http://emulator:3001 with Docker, or http://localhost:3001 locally).
-// Emulator exposes only:
-//   GET {EMULATOR_URL}/sensors   → static metadata (sensorId, sensorName, unit)
-//   WS  {EMULATOR_URL}/ws/telemetry → stream of readings { sensorId, value, timestamp }
-// The emulator does not store or serve "latest" readings. You must:
-// - Connect to the emulator WebSocket stream.
-// - Store the latest value per sensor in the API as readings arrive.
-// - Expose your own metadata and "latest telemetry" routes to clients.
-// Do not modify the emulator service.
-// ---------------------------------------------------------------------------
+app.get('/sensors', (_req, res) => {
+  if (!apiState.metadataLoaded) {
+    return res.status(503).json({error: 'Metadata for the sensors has not loaded yet. Please try again in a moment.'});
+  }
+
+  const sensorList: sensorDetails[] = [];
+  for (const [sensorId, info] of metadata) {
+    const range = SENSOR_RANGES.get(info.sensorName);
+    let min: number | null = null;
+    let max: number | null = null;
+    if (range) {
+      min = range.min;
+      max = range.max;
+    }
+
+    sensorList.push({
+      sensorId: sensorId,
+      sensorName: info.sensorName,
+      unit: info.unit,
+      min: min,
+      max: max,
+    });
+  }
+
+  res.json(sensorList);
+});
+
+app.get('/telemetry/latest', (_req, res) => {
+  const readingList: sensorReading[] = [];
+  for (const [sensorId, reading] of latestData) {
+    readingList.push({
+      sensorId: sensorId,
+      value: reading.value,
+      timestamp: reading.timestamp,
+      status: getStatus(sensorId, reading.value),
+      alarm: alarmOn.has(sensorId),
+    });
+  }
+
+  res.json(readingList);
+});
+
+fetchMetadata();
+connectToEmulator();
 
 const server = http.createServer(app);
 
